@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8" ?><ChoregrapheProject xmlns="http://www.aldebaran-robotics.com/schema/choregraphe/project.xsd" xar_version="3"><Box name="root" id="-1" localization="8" tooltip="Root box of Choregraphe&apos;s behavior. Highest level possible." x="0" y="0"><bitmap>media/images/box/root.png</bitmap><script language="4"><content><![CDATA[]]></content></script><Input name="onLoad" type="1" type_size="1" nature="0" inner="1" tooltip="Signal sent when diagram is loaded." id="1" /><Input name="onStart" type="1" type_size="1" nature="2" inner="0" tooltip="Box behavior starts when a signal is received on this input." id="2" /><Input name="onStop" type="1" type_size="1" nature="3" inner="0" tooltip="Box behavior stops when a signal is received on this input." id="3" /><Output name="onStopped" type="1" type_size="1" nature="1" inner="0" tooltip="Signal sent when box behavior is finished." id="4" /><Timeline enable="0"><BehaviorLayer name="behavior_layer1"><BehaviorKeyframe name="keyframe1" index="1"><Diagram scale="118.921"><Box name="Say Text" id="1" localization="8" tooltip="Say the text received on its input." x="350" y="67"><bitmap>media/images/box/interaction/say.png</bitmap><script language="4"><content><![CDATA[import time
+
+class MyClass(GeneratedClass):
+    def __init__(self):
+        GeneratedClass.__init__(self, False)
+        self.tts = ALProxy('ALTextToSpeech')
+        self.ttsStop = ALProxy('ALTextToSpeech', True) #Create another proxy as wait is blocking if audioout is remote
+
+    def onLoad(self):
+        self.bIsRunning = False
+        self.ids = []
+
+    def onUnload(self):
+        for id in self.ids:
+            try:
+                self.ttsStop.stop(id)
+            except:
+                pass
+        while( self.bIsRunning ):
+            time.sleep( 0.2 )
+
+    def onInput_onStart(self, p):
+        self.bIsRunning = True
+        try:
+            sentence = "\RSPD="+ str( self.getParameter("Speed (%)") ) + "\ "
+            sentence += "\VCT="+ str( self.getParameter("Voice shaping (%)") ) + "\ "
+            sentence += str(p)
+            sentence +=  "\RST\ "
+            id = self.tts.post.say(str(sentence))
+            self.ids.append(id)
+            self.tts.wait(id, 0)
+        finally:
+            try:
+                self.ids.remove(id)
+            except:
+                pass
+            if( self.ids == [] ):
+                self.onStopped() # activate output of the box
+                self.bIsRunning = False
+
+    def onInput_onStop(self):
+        self.onUnload()]]></content></script><Input name="onLoad" type="1" type_size="1" nature="0" inner="1" tooltip="Signal sent when Diagram is loaded." id="1" /><Input name="onStart" type="3" type_size="1" nature="2" inner="0" tooltip="Box behavior starts when a signal is received on this Input." id="2" /><Input name="onStop" type="1" type_size="1" nature="3" inner="0" tooltip="Box behavior stops when a signal is received on this Input." id="3" /><Output name="onStopped" type="1" type_size="1" nature="1" inner="0" tooltip="Signal sent when Box behavior is finished." id="4" /><Parameter name="Voice shaping (%)" inherits_from_parent="1" content_type="1" value="100" default_value="100" min="50" max="150" tooltip='Used to modify at runtime the voice feature (tone, speed). In a slighty&#x0A;different way than pitch and speed, it gives a kind of &quot;gender or age&#x0A;modification&quot; effect.&#x0A;&#x0A;For instance, a quite good male derivation of female voice can be&#x0A;obtained setting this parameter to 78%.&#x0A;&#x0A;Note: For a better effect, you can compensate this parameter with the&#x0A;speed parameter. For example, if you want to decrease by 20% the voice&#x0A;shaping, you will have to increase by 20% the speed to keep a constant&#x0A;average speed.' id="5" /><Parameter name="Speed (%)" inherits_from_parent="1" content_type="1" value="100" default_value="100" min="50" max="200" tooltip="Changes the speed of the voice.&#x0A;&#x0A;Note: For a better effect, you can compensate this parameter with the voice&#x0A;shaping parameter. For example, if you want to increase by 20% the speed, you&#x0A;will have to decrease by 20% the voice shaping to keep a constant average&#x0A;speed." id="6" /><Resource name="Speech" type="Lock" timeout="0" /></Box><Box name="Mask Detection" id="2" localization="8" tooltip="Programme pour detecter l&apos;utilisation du masque" x="113" y="13"><bitmap>../../../../../home/nico/StageG1/mask.png</bitmap><script language="4"><content><![CDATA[import cv2
+import os
+import numpy as np
+import tensorflow as tf
+
+
+# Detection de visages à l'aide du model Cafee Model Zoo
+# http://caffe.berkeleyvision.org/model_zoo.html
+prototxt_path = os.path.join('resources/deploy.prototxt')
+caffemodel_path = os.path.join('resources/weights.caffemodel')
+model = cv2.dnn.readNetFromCaffe(prototxt_path, caffemodel_path)
+
+#Chargement du modèle permettant de détecter le port du masque
+modelMasque = tf.keras.models.load_model("resources/QSTOMIT-MASQUE.model")
+
+class MyClass(GeneratedClass):
+    def __init__(self):
+        try: # disable autoBind
+          GeneratedClass.__init__(self, False)
+        except TypeError: # if NAOqi < 1.14
+          GeneratedClass.__init__( self )
+        self.camera = ALProxy("ALVideoDevice")
+
+    def onLoad(self):
+        # subscribe(cameraIndex, resolution, colorSpace, fps)
+        # 0 -> camera top
+        # 2 -> 480x640
+        # 11 -> RGB
+        self.camera_top = self.camera.subscribeCamera("camera_top", 0, 2, 11, 15)
+
+    def onUnload(self):
+        self.camera.unsubscribe(self.camera_top)
+
+    def onInput_onStart(self):
+        while True:
+            image = self.camera.getImageRemote(self.camera_top)
+            self.image_processing(image)
+            k = cv2.waitKey(30) & 0xff
+            if k==27:
+                break
+
+    def onInput_onStop(self):
+        self.onUnload() #it is recommended to reuse the clean-up as the box is stopped
+        self.onStopped() #activate the output of the
+
+
+    def image_processing(self, image):
+        if image == None:
+            print "Cannot capture"
+            self.camera.closeCamera(0)
+            self.camera.stopCamera(0)
+            return
+        elif image[6] == None:
+            print "No image data string"
+            return
+        else:
+            image = np.array(image[6])
+            image = np.reshape(image, (480, 640, 3))
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            blob = cv2.dnn.blobFromImage(cv2.resize(image, (300, 300)), 1.0, (300, 300), (104.0, 177.0, 123.0))
+            model.setInput(blob)
+            detections = model.forward()
+
+            h = image.shape[0]
+            w = image.shape[1]
+
+            for i in range(0, detections.shape[2]):
+                box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+                (startX, startY, endX, endY) = box.astype("int")
+
+                confidence = detections[0, 0, i, 2]
+
+                # If confidence > 0.5, save it as a separate file
+                if (confidence > 0.5):
+                    frame = image[startY:endY, startX:endX]
+
+                    #Appel du modèle appris pour la detection de masque
+                    capture = cv2.resize(frame, (224, 224))
+                    capture = capture.reshape((1, capture.shape[0], capture.shape[1], capture.shape[2]))
+                    predict = modelMasque.predict(capture)
+                    pasDeMasque = predict[0][0]
+                    avecMasque = predict[0][1]
+
+                    if (pasDeMasque > avecMasque):
+                        self.useMasque("Pas de Masque! Mettre votre masque s'il vous plaît")
+                        cv2.rectangle(image, (startX, startY), (endX, endY),(0, 0, 255), 2)
+                        cv2.putText(image, "PAS DE MASQUE", (startX, startY-10),cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 2)
+                    else:
+                        self.useMasque("Merci d'utiliser votre masque!")
+                        cv2.rectangle(image, (startX, startY), (endX, endY),(0, 255, 0), 2)
+                        cv2.putText(image, "OK", (startX, startY), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 2)
+
+
+            # Affichage de l'image
+            cv2.imshow('img', image)
+        return]]></content></script><Input name="onLoad" type="1" type_size="1" nature="0" inner="1" tooltip="Signal sent when diagram is loaded." id="1" /><Input name="onStart" type="1" type_size="1" nature="2" inner="0" tooltip="Box behavior starts when a signal is received on this input." id="2" /><Input name="onStop" type="1" type_size="1" nature="3" inner="0" tooltip="Box behavior stops when a signal is received on this input." id="3" /><Output name="onStopped" type="1" type_size="1" nature="1" inner="0" tooltip="Signal sent when box behavior is finished." id="4" /><Output name="useMasque" type="3" type_size="1" nature="2" inner="0" tooltip="La sortie envoye l&apos;use du masque" id="5" /></Box><Link inputowner="1" indexofinput="2" outputowner="2" indexofoutput="5" /><Link inputowner="0" indexofinput="4" outputowner="1" indexofoutput="4" /><Link inputowner="2" indexofinput="2" outputowner="0" indexofoutput="2" /></Diagram></BehaviorKeyframe></BehaviorLayer></Timeline></Box></ChoregrapheProject>
